@@ -1,0 +1,239 @@
+ ▐▛███▛█   Claude Code v2.1.285
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   ~/race-hunter-experiment/snapshot
+
+  Get to finished work sooner with Opus 5.5. Switch anytime with /model.
+  1 more notice hidden
+
+❯ /clear                                                                        
+
+❯ race-hunter-checklist 서브에이전트를 사용해 이 저장소 백엔드의 동시성 경합을  
+  찾아 줘. 결과는 에이전트가 낸 표를 그대로 보여 줘.                            
+
+⏺ race-hunter-checklist(Checklist race hunt backend)
+  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)
+
+⏺ race-hunter-checklist 에이전트가 지금 백엔드의 동시성 경합을 찾고 있어요.
+  코드는 고치지 않고 보고만 합니다. 끝나면 에이전트가 낸 표를 고치지 않고 그대로
+  보여 드릴게요.
+
+✻ Churned for 6s · done 12:51 PM
+
+⏺ Agent "Checklist race hunt backend" finished · 2m 34s
+
+⏺ race-hunter-checklist 에이전트가 분석을 마쳤어요. 에이전트는 정적 분석만 했고,
+  코드는 수정하지 않았으며 테스트도 실행하지 않았습니다. 저도 결과를 따로
+  검증하지 않았어요.
+
+  가장 심각한 문제는 게시글 수정·삭제가 모든 컬럼을 다시 쓴다는 점입니다. 이
+  때문에 두 가지가 생길 수 있어요(R1·R2, 둘 다 확신도 상·심각도 높음).
+  - 동시에 들어온 좋아요가 like_count에서 사라질 수 있어요.
+  - 삭제된 글이 되살아날 수 있어요.
+
+  아래는 에이전트가 낸 표 그대로입니다.
+
+  1. 쓰기 경로 목록
+
+  ┌─────┬─────────────────────────────────────┬──────────────────────────────┐
+  │  #  │                위치                 │             쿼리             │
+  ├─────┼─────────────────────────────────────┼──────────────────────────────┤
+  │ W1  │ PostService.create                  │ INSERT posts                 │
+  │     │ (PostService.java:42-46)            │                              │
+  ├─────┼─────────────────────────────────────┼──────────────────────────────┤
+  │ W2  │ PostService.update (:49-56)         │ 엔티티 SELECT, 그다음 전체   │
+  │     │                                     │ 컬럼 UPDATE posts            │
+  ├─────┼─────────────────────────────────────┼──────────────────────────────┤
+  │     │                                     │ 엔티티 SELECT, 그다음 전체   │
+  │ W3  │ PostService.delete (:58-63)         │ 컬럼 UPDATE posts(deleted_at │
+  │     │                                     │  설정)                       │
+  ├─────┼─────────────────────────────────────┼──────────────────────────────┤
+  │ W4  │ CommentService.create               │ existsLive 확인(락 없음),    │
+  │     │ (CommentService.java:47-52)         │ 그다음 INSERT comments       │
+  ├─────┼─────────────────────────────────────┼──────────────────────────────┤
+  │     │                                     │ 댓글 SELECT, existsLive      │
+  │ W5  │ CommentService.delete (:55-64)      │ 확인, 그다음 전체 컬럼       │
+  │     │                                     │ UPDATE comments              │
+  ├─────┼─────────────────────────────────────┼──────────────────────────────┤
+  │     │ LikeService.toggle                  │ existsLive, 그다음 INSERT ON │
+  │ W6  │ (LikeService.java:31-46) +          │  CONFLICT 또는 DELETE,       │
+  │     │ PostLikeRepository (JDBC)           │ 그다음 UPDATE posts …        │
+  │     │                                     │ RETURNING                    │
+  └─────┴─────────────────────────────────────┴──────────────────────────────┘
+
+  2. 발견 사항
+
+  ID: R1
+  위치(클래스.메서드): PostService.update (PostService.java:50-55), 원인은
+  Post.java:42-43(likeCount 매핑)
+  동시 요청 조합: W2(작성자의 글 수정) × W6(아무 사용자의 좋아요 토글)
+  인터리빙 (T1/T2 단계별): T1: findLive로 like_count=10을 읽음. T2: post_likes
+  INSERT, like_count+1로 11 RETURNING, 커밋. T1: flush 시 UPDATE posts SET 
+  title=?,content=?,author=?,like_count=10,created_at=?,deleted_at=null  WHERE 
+  id=?. T2가 먼저 행 락을 잡았으면 T1은 기다렸다가 다시 평가하지만, WHERE가
+  id뿐이라 그대로 10을 씀. 커밋.
+  깨지는 불변식 / 결과: like_count == post_likes 기록 수 불변식이 깨집니다(+1
+  기록이 있는데 카운트는 그대로). 반대 순서(토글 취소 뒤 덮어쓰기)에서는
+  카운트가 기록보다 커집니다. 카운트가 실제보다 낮아지면 decrement의
+  greatest(like_count-1,0)(PostLikeRepository.java:45)이 음수 CHECK 위반을
+  0으로 덮어 어긋남을 숨깁니다.
+  확신도 / 심각도: 상 / 높음
+  재현 테스트 아이디어: 커넥션 C를 따로 열어 BEGIN; INSERT post_likes…; UPDATE 
+  posts SET like_count=like_count+1 WHERE id=?를 실행하고 커밋하지 않음. 다른
+  스레드에서 postService.update를 호출(제목을 실제로 바꿔야 dirty가 됨).
+  pg_locks/pg_stat_activity에서 그 스레드가 Lock 대기인지 폴링으로 확인(sleep
+  없이). C 커밋. update 완료 뒤 like_count = 초기값 + count(post_likes)를
+  확인하면 실패해야 함.
+  수정 후보: ① likeCount에 @Column(updatable=false, insertable=false)
+  적용(카운터는 JDBC만 쓰도록). ② @DynamicUpdate로 바뀐 컬럼만 UPDATE. ③
+  @Version은 JDBC 토글이 버전을 올리지 않으므로 해결책이 아님.
+  ────────────────────────────────────────
+  ID: R2
+  위치(클래스.메서드): PostService.update (:50-55)
+  동시 요청 조합: W2 × W3(같은 작성자가 두 탭/기기에서 수정과 삭제)
+  인터리빙 (T1/T2 단계별): T1(update): findLive, deleted_at=null로 보임.
+  T2(delete): findLive, flush UPDATE … deleted_at=now, 커밋(또는 커밋 전 락
+  보유). T1: flush UPDATE …  deleted_at=NULL WHERE id=?. 락을 기다렸다가 다시
+  평가해도 조건이 id뿐이라 통과. T1의 get()이 자기가 되살린 행을 읽어 200.
+  깨지는 불변식 / 결과: 삭제된 글이 되살아납니다. 목록, 상세, commentCount,
+  댓글,
+  좋아요 모두 다시 노출되어 "삭제된 글은 어디에서도 존재하지 않는다" 불변식이
+  깨집니다. T2 클라이언트는 204를 받았는데 글이 살아 있습니다.
+  확신도 / 심각도: 상 / 높음
+  재현 테스트 아이디어: 커넥션 C에서 BEGIN; UPDATE posts SET deleted_at=now() 
+  WHERE id=?를 실행하고 커밋하지 않음. 다른 스레드에서 postService.update 호출.
+   pg_locks로 대기 확인. C 커밋. deleted_at IS NULL이면 재현됨.
+  수정 후보: ① findLive에 행 락 걸기: @Lock(PESSIMISTIC_WRITE)를 쓰되 실제로
+  나가는 SQL이 FOR NO KEY UPDATE인지 확인. FOR UPDATE는 좋아요/댓글 INSERT의 FK
+   확인(FOR KEY SHARE)까지 막으므로 피합니다. READ COMMITTED에서 락을 얻은 뒤
+  deleted_at is null을 다시 평가하므로 404가 됩니다. ② 또는 조건부 UPDATE SET 
+  title=?,content=? WHERE id=?  AND deleted_at IS NULL의 영향 행 수를 확인. ③
+  @DynamicUpdate만으로도 deleted_at 덮어쓰기는 막히지만, 삭제된 글 수정이
+  성공하는 경로가 남지 않는지 함께 확인해야 합니다.
+  ────────────────────────────────────────
+  ID: R3
+  위치(클래스.메서드): CommentService.create (CommentService.java:49-50)
+  동시 요청 조합: W4 × W3(아무 사용자의 댓글 작성 × 작성자의 글 삭제)
+  인터리빙 (T1/T2 단계별): T1: existsLive가 true(락 없음). T2: 글 소프트 삭제 후
+
+  커밋. T1: INSERT comments. FK 확인은 FOR KEY SHARE만 잡는데, 소프트 삭제는
+  키가 아닌 컬럼 UPDATE(FOR NO KEY  UPDATE)라 서로 충돌하지 않음. 201 반환.
+  깨지는 불변식 / 결과: 삭제된 글에 댓글 작성이 성공합니다(404여야 함). 소프트
+  삭제는 UPDATE이므로 FK가 보호하지 못하는 전형적인 확인 후 실행 문제입니다.
+  조회 쪽은 글 존재 여부로 걸러져 노출되지 않지만, 쓰기 계약이 위반되고 R2로
+  글이 되살아나면 그대로 노출됩니다.
+  확신도 / 심각도: 상 / 중간
+  재현 테스트 아이디어: 블로킹 지점이 없어 커넥션 락 방식은 쓸 수 없음.
+  @MockitoSpyBean PostRepository로 existsLive가 true를 반환한 직후 다른
+  스레드에서 postService.delete를 실행하고 커밋까지 CountDownLatch로 기다리게
+  함. 201이 오면(댓글 행이 생기면) 재현됨.
+  수정 후보: requireLivePost를 SELECT 1 FROM posts WHERE id=? AND deleted_at IS 
+  NULL FOR SHARE로 교체. FOR SHARE는 삭제/수정의 NO KEY UPDATE와 충돌하고, 락을
+   얻은 뒤 조건을 다시 평가하므로 404가 됩니다. 비용으로 같은 글의 좋아요
+  increment가 댓글 INSERT 커밋까지 잠깐 기다립니다. KEY SHARE는 삭제와 충돌하지
+   않아 효과가 없습니다. 락 순서상 교착 위험은 없습니다(토글은 post_likes 다음
+  posts, 댓글 작성은 posts만 잡음).
+  ────────────────────────────────────────
+  ID: R4
+  위치(클래스.메서드): PostService.delete (:59-62)
+  동시 요청 조합: W3 × W6
+  인터리빙 (T1/T2 단계별): T1(delete): 엔티티를 읽음(like_count=10). T2(toggle):
+
+  INSERT 후 increment로 11, 커밋. T1: flush 시 like_count=10으로 덮어쓰고
+  deleted_at 설정.
+  깨지는 불변식 / 결과: 삭제된 글의 like_count와 기록 수가 어긋납니다. 글이
+  되살아나지 않으면 보이지 않지만, R2와 합쳐지면 어긋난 값이 노출됩니다. 반대
+  순서(삭제가 먼저 락을 잡음)는 안전합니다. increment가 다시 평가되면서
+  deleted_at is  null 때문에 null이 되고, 404 예외로 롤백됩니다.
+  확신도 / 심각도: 상 / 낮음
+  재현 테스트 아이디어: R1과 같은 커넥션 C 방식으로, 대상 호출만
+  postService.delete.
+  수정 후보: R1의 ①/② 또는 조건부 UPDATE posts SET deleted_at=? WHERE id=? AND 
+  deleted_at IS NULL.
+  ────────────────────────────────────────
+  ID: R5
+  위치(클래스.메서드): PostService.update / delete 반대 순서 (:59-62)
+  동시 요청 조합: W3 × W2 (같은 작성자, 삭제가 먼저 읽음)
+  인터리빙 (T1/T2 단계별): T1(delete): 옛 제목을 읽음. T2(update): 새 제목 커밋,
+
+  200 응답. T1: 옛 제목으로 덮어쓰고 deleted_at 설정.
+  깨지는 불변식 / 결과: 수정이 사라집니다. 글이 삭제되어 실제 노출 영향은 거의
+  없습니다.
+  확신도 / 심각도: 상 / 낮음
+  재현 테스트 아이디어: 커넥션 C에서 제목 UPDATE를 잡아 둔 채 delete 호출, 커밋
+  뒤 title 확인.
+  수정 후보: R2와 같은 해결책(@DynamicUpdate 또는 조건부 UPDATE).
+  ────────────────────────────────────────
+  ID: R6
+  위치(클래스.메서드): PostService.delete / CommentService.delete
+  (CommentService.java:57-63)
+  동시 요청 조합: W3×W3, W5×W5 (같은 사용자의 중복 삭제 요청)
+  인터리빙 (T1/T2 단계별): T1, T2 모두 "살아 있음"으로 읽음. 둘 다 UPDATE … 
+  deleted_at=now. T2는 T1 락을 기다렸다가 조건(id만)이 통과해 덮어씀. 둘 다
+  204.
+  깨지는 불변식 / 결과: 두 번째 요청이 404가 아니라 204를 받고 deleted_at이
+  덮어써집니다. "삭제된 리소스는 404" 판정 순서 계약 위반이지만 데이터 영향은
+  거의 없습니다.
+  확신도 / 심각도: 상 / 낮음
+  재현 테스트 아이디어: 커넥션 C에서 UPDATE … SET deleted_at 후 커밋하지 않고
+  서비스 delete 호출, 대기 확인, 커밋. 204 확인.
+  수정 후보: 조건부 UPDATE … WHERE id=? AND deleted_at IS NULL의 영향 행 0이면
+  404. 또는 FOR NO KEY UPDATE로 락 걸고 다시 조회.
+  ────────────────────────────────────────
+  ID: R7
+  위치(클래스.메서드): LikeService.toggle (LikeService.java:36-45)
+  동시 요청 조합: W6 × W6 × W6 … (같은 사용자 4회 이상 연타)
+  인터리빙 (T1/T2 단계별): 매 시도마다 INSERT가 0행(다른 요청이 삽입 후 커밋),
+  DELETE가 0행(다른 요청이 먼저 삭제)이 3번 반복된 뒤 45행의 대체 경로로 감.
+  깨지는 불변식 / 결과: 기록 변경 없이 현재 상태만 반환합니다. 기록과 카운트가
+  항상 짝으로 바뀌므로 불변식은 깨지지 않습니다. 다만 "토글" 요청이 아무것도
+  하지 않고 200을 받을 수 있어, 재시도가 문제를 완전히 해결하지는 않습니다.
+  확신도 / 심각도: 중 / 낮음
+  재현 테스트 아이디어: 스파이로 insertIfAbsent/delete 사이에 다른 트랜잭션의
+  삽입/삭제 커밋을 강제로 끼워 넣음.
+  수정 후보: pg_advisory_xact_lock(hashtext(post_id‖user_id)) 또는 SELECT … FROM
+   
+  posts WHERE id=? FOR NO KEY UPDATE로 같은 사용자의 토글을 직렬화(글 단위 락은
+   다른 사용자 토글도 직렬화하므로 키 단위 advisory lock이 낫습니다).
+
+  에이전트가 함께 남긴 참고 사항
+
+  - 시드 적재는 검토하지 못했어요. 이 스냅샷에는 문서에 나오는 SeedLoader가
+    없어서, 재기동과 동시 기동 경합은 분석 대상에서 빠졌습니다.
+  - 분석 기준: PostgreSQL의 READ COMMITTED 격리 수준을 전제로 했어요. 또 Post에
+    @DynamicUpdate, @Version, updatable=false가 하나도 없어서 UPDATE가 모든
+    컬럼을 다시 쓴다고 보았습니다.
+  - 정해 주셔야 할 점: like_count의 기준이 문서마다 달라요. CLAUDE.md는
+    "post_likes 기록 수와 일치", API 계약서와 LikeService 주석은 "시드 초기값 +
+    기록 수"입니다. 어느 기준이든 R1과 R4는 성립하지만, 재현 테스트를 쓰기 전에
+    하나로 정해야 합니다.
+  - 안전하다고 본 경합: 다른 사용자끼리 동시에 좋아요를 누르는 경우, 같은
+    사용자가 두 번 토글하는 경우, 글 작성, 서로 다른 댓글을 다루는 경우,
+    commentCount(조회 때마다 세는 값)는 안전하다고 판단했습니다.
+
+  이 중 수정할 항목을 고르시면, 프로젝트 규칙에 따라 재현 테스트를 먼저 쓰고
+  수정 전 코드에서 실패하는지 확인하는 계획부터 정리해 드릴게요.
+
+✻ Sautéed for 3m 18s · done 12:54 PM
+
+❯    /export 결과B.txt                                                          
+
+⏺ /export는 Claude Code에 내장된 명령이라 제가 대신 실행할 수 없어요. 앞에
+  공백이 붙어 있어서 명령으로 인식되지 않고 일반 메시지로 전달됐습니다.
+
+  입력창 맨 앞에 공백 없이 다시 입력해 주세요.
+
+  /export 결과B.txt
+
+  에이전트가 낸 표만 따로 파일로 저장하고 싶으시면 말씀해 주세요. 제가 직접 써
+  드릴게요.
+
+✻ Brewed for 5s · done 12:57 PM
+
+❯    /resume                                                                    
+
+⏺ /resume도 앞에 공백이 붙어서 일반 메시지로 전달됐어요. 입력창 맨 앞에 공백
+  없이 다시 입력해 주세요.
+
+  /resume
+
+✻ Cogitated for 3s · done 12:57 PM
