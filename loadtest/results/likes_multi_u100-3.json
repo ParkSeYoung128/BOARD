@@ -1,0 +1,162 @@
+{
+    "root_group": {
+        "checks": {
+            "multi 200": {
+                "name": "multi 200",
+                "path": "::multi 200",
+                "id": "16fdcdb8658e71a48f13248a89ed6137",
+                "passes": 20050,
+                "fails": 0
+            },
+            "multi likeCount 음수 아님": {
+                "name": "multi likeCount 음수 아님",
+                "path": "::multi likeCount 음수 아님",
+                "id": "7e292fac4b7b390b58daec61a3ecd2b1",
+                "passes": 20050,
+                "fails": 0
+            }
+        },
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {}
+    },
+    "metrics": {
+        "http_req_duration{expected_response:true}": {
+            "avg": 34.63175546025732,
+            "min": 0.733,
+            "med": 33.4855,
+            "max": 168.004,
+            "p(90)": 48.0439,
+            "p(95)": 58.5677
+        },
+        "vus_max": {
+            "min": 100,
+            "max": 100,
+            "value": 100
+        },
+        "http_req_duration": {
+            "max": 168.004,
+            "p(90)": 48.0439,
+            "p(95)": 58.5677,
+            "avg": 34.63175546025732,
+            "min": 0.733,
+            "med": 33.4855
+        },
+        "vus": {
+            "value": 58,
+            "min": 58,
+            "max": 100
+        },
+        "likes_multi_expected_liked": {
+            "rate": 7.035292545052254,
+            "count": 50
+        },
+        "http_req_duration{name:like_multi}": {
+            "min": 0.733,
+            "med": 33.4865,
+            "max": 168.004,
+            "p(90)": 48.046600000000005,
+            "p(95)": 58.5681,
+            "avg": 34.63830518703242,
+            "thresholds": {
+                "p(95)<2000": false
+            }
+        },
+        "http_req_connecting": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0.0036785180013962247,
+            "min": 0,
+            "med": 0,
+            "max": 1.766
+        },
+        "data_received": {
+            "count": 4927212,
+            "rate": 693287.5570298402
+        },
+        "iterations": {
+            "rate": 14.070585090104508,
+            "count": 100
+        },
+        "http_req_failed": {
+            "passes": 0,
+            "fails": 20054,
+            "thresholds": {
+                "rate<0.01": false
+            },
+            "value": 0
+        },
+        "http_reqs": {
+            "count": 20054,
+            "rate": 2821.7151339695583
+        },
+        "likes_multi_applied": {
+            "count": 20050,
+            "rate": 2821.152310565954
+        },
+        "http_req_sending": {
+            "avg": 0.004589707788969577,
+            "min": 0.001,
+            "med": 0.003,
+            "max": 1.314,
+            "p(90)": 0.006,
+            "p(95)": 0.007
+        },
+        "data_sent": {
+            "count": 2725703,
+            "rate": 383522.3599185313
+        },
+        "iteration_duration": {
+            "avg": 6952.578633370006,
+            "min": 6424.683875,
+            "med": 6997.613313,
+            "max": 7096.161333,
+            "p(90)": 7084.7104211,
+            "p(95)": 7088.49699345
+        },
+        "http_req_tls_handshaking": {
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "http_req_waiting": {
+            "avg": 34.61275127156677,
+            "min": 0.724,
+            "med": 33.467,
+            "max": 167.982,
+            "p(90)": 48.0277,
+            "p(95)": 58.55219999999999
+        },
+        "http_req_receiving": {
+            "min": 0.004,
+            "med": 0.012,
+            "max": 1.591,
+            "p(90)": 0.023,
+            "p(95)": 0.03,
+            "avg": 0.01441448090156584
+        },
+        "http_req_blocked": {
+            "p(95)": 0.002,
+            "avg": 0.004935773411790904,
+            "min": 0,
+            "med": 0.001,
+            "max": 2.996,
+            "p(90)": 0.001
+        },
+        "checks": {
+            "passes": 40100,
+            "fails": 0,
+            "thresholds": {
+                "rate==1": false
+            },
+            "value": 1
+        }
+    },
+    "setup_data": {
+        "postId": 69
+    }
+}

@@ -1,0 +1,38 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE / 에디터
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+# Eclipse/STS
+.classpath
+.project
+.settings/
+.factorypath
+
+# 환경 변수·비밀값 (예시 파일만 커밋)
+.env
+.env.*
+!.env.example
+
+# 로그·임시 파일
+*.log
+*.tgz
+*.tmp
+
+# 테스트·커버리지 산출물
+coverage/
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+
+# 로컬 AI 도구 설정
+.claude/settings.local.json
+
+# 로컬 참고 자료 (피그마 캡처 등 — 저장소에 올리지 않음)
+/screens/
