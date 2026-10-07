@@ -1,0 +1,73 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit 설정 — BOARD (Spring Boot 3 / Java 17 + Next.js 15 / TypeScript + PostgreSQL)
+
+language: "ko-KR"
+tone_instructions: "한국어로, 근거와 재현 시나리오를 함께 짧고 구체적으로 지적한다. 칭찬·요약 남발 금지, 버그·요구사항 위반·성능 위험을 우선한다."
+early_access: false
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "main"
+
+  # 리뷰 대상에서 제외: 대용량·생성물·바이너리·출제 자료
+  path_filters:
+    - "!seed/seed.json"
+    - "!**/*.png"
+    - "!**/*.woff2"
+    - "!**/package-lock.json"
+    - "!frontend/public/**"
+    - "!frontend/.next/**"
+    - "!backend/build/**"
+    - "!backend/gradle/wrapper/**"
+
+  path_instructions:
+    - path: "backend/src/main/java/**"
+      instructions: |
+        아래를 우선 검토한다.
+        - 삭제 정책: 게시글·댓글은 행을 지우지 않고 deleted_at만 채운다. 목록·상세·commentCount·댓글 목록·좋아요·댓글 작성 어디에서도 삭제된 데이터(삭제된 글의 댓글 포함)가 노출되지 않는지. 네이티브/JDBC 쿼리는 @SQLRestriction이 적용되지 않으므로 조건 누락 여부를 확인한다.
+        - 권한: 요청자는 x-user-id 헤더 → 쿠키 → demo_user 순. 남의 글·댓글 수정/삭제가 막히는지, 판정 순서(404 → 403 → 400)가 지켜지는지.
+        - 페이지네이션: created_at DESC, id DESC keyset 정렬, limit+1 조회, nextCursor 생성, 오프셋 사용 금지. 응답 항목(Post/Comment)에 요구사항 이외 필드가 추가되지 않았는지(목록 봉투의 nextCursor만 예외).
+        - JPA: 컬렉션 fetch join + 페이징(메모리 페이징), N+1, 양방향 연관관계, open-in-view, 엔티티 read-modify-write로 카운터를 갱신하는 코드를 지적한다.
+        - 동시성: 좋아요 토글은 (post_id,user_id) 유일 제약과 원자적 UPDATE로 처리되는지. like_count가 음수가 될 수 있는 경로가 없는지.
+        - 검증: 제목 20자는 코드포인트 기준(이모지 1자), strip 후 공백 불가, 길이 상한.
+        - 시각: 초 단위 절삭 UTC 저장·직렬화, isLiked가 record로 직렬화되어 "isLiked" 키를 유지하는지.
+    - path: "backend/src/main/resources/db/migration/**"
+      instructions: |
+        Flyway 마이그레이션. 이미 적용된 버전 파일을 수정하지 않았는지, 부분 인덱스(WHERE deleted_at IS NULL)와 IDENTITY 시퀀스가 시드 id(명시 삽입)와 충돌하지 않는지, 제약(CHECK, FK)이 빠지지 않았는지 확인한다.
+    - path: "backend/src/main/java/**/seed/**"
+      instructions: |
+        시드 적재. 재기동해도 중복 적재·삭제 부활이 없는지(ON CONFLICT DO NOTHING), 한 트랜잭션·동시 기동 보호(advisory lock), 적재 후 시퀀스 setval, 삭제 id의 deleted_at 처리, 배치 크기와 대용량 메모리 사용을 확인한다.
+    - path: "backend/src/test/**"
+      instructions: |
+        테스트가 실제 위험을 검증하는지 본다: keyset 순회(댓글 1,411개 무중복·순서), 같은 초 동률 경계, 삭제 데이터 비노출, 권한, 좋아요 동시성, 쿼리 수(N+1), 시드 재적재. 불필요한 모킹으로 DB 동작을 우회하는 테스트를 지적한다.
+    - path: "frontend/app/**"
+      instructions: |
+        Next.js 15 App Router. 클라이언트 컴포넌트 경계('use client')가 적절한지, dev-user 화면은 수정하지 않았는지, 라우트 이동(작성 완료→목록+토스트, 삭제→목록, 수정 완료→상세)이 요구사항과 같은지 확인한다.
+    - path: "frontend/features/**"
+      instructions: |
+        TanStack Query 사용을 검토한다: 쿼리 키 일관성, useInfiniteQuery의 getNextPageParam(nextCursor === null이면 종료), 낙관적 업데이트의 롤백과 무효화, 중복 요청·경쟁 상태. 좋아요 연타 시 상태가 어긋나지 않는지, 댓글은 최초 2개 → 더보기 → 무한 스크롤 흐름인지(total > 2일 때만 더보기), 본인 댓글/글에서만 삭제·메뉴가 보이는지 확인한다.
+    - path: "frontend/shared/**"
+      instructions: |
+        시간 표기 유틸은 순수 함수여야 하며 경계값(59초/60초, 23시간/24시간, 6일/7일, 29일/30일, 364일/365일)이 테스트되는지 확인한다. 목록은 항상 상대 시간, 댓글은 30일 미만만 상대, 상세 본문은 yy.MM.dd(Asia/Seoul). 숫자는 천 단위 쉼표.
+    - path: "**/*.css"
+      instructions: |
+        375px 모바일 기준 레이아웃. 색상·간격은 CSS 변수(docs/design-tokens.md)를 사용하고 하드코딩 값을 지적한다. 텍스트 넘침(말줄임), 고정 하단 입력창/버튼의 safe-area, 포커스 스타일을 확인한다.
+    - path: "docker-compose.yml"
+      instructions: |
+        docker compose up 한 번으로 기동되는지, /health 헬스체크 경로·200 유지, BACKEND_PORT/FRONTEND_PORT/DB_PORT 환경 변수로 포트 변경이 가능한지 확인한다.
+    - path: "README.md"
+      instructions: |
+        기술 선택·상태 설계·구조·데이터 적재·테스트를 실제 코드의 파일·함수를 짚어 설명하는지, 선택의 이유와 포기한 것이 있는지, 사전 조건이 빠짐없이 적혀 있는지 확인한다.
+
+chat:
+  auto_reply: true
